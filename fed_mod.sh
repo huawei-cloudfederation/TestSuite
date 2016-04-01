@@ -1,7 +1,6 @@
 #!/bin/bash
 
-pwd
-#cd ../../
+cd src
 git clone https://github.com/huawei-cloudfederation/FedModules.git
 cd FedModules
 ./build.sh
