@@ -1,0 +1,49 @@
+{
+	"List": [{
+		"Master": [{
+			"IsPublic": true,
+			"Ip": "52.67.40.148"
+		}],
+		"Slave": [{
+			"IsPublic": true,
+			"Ip": "52.67.38.147"
+		}],
+		"Gossiper": [{
+			"IsPublic": true,
+			"Ip": "52.67.21.94"
+		}],
+		"Key_pem": "/home/ubuntu/DC3/K8sBlore.pem",
+		"Username": ""
+	}, {
+		"Master": [{
+			"IsPublic": true,
+			"Ip": "54.169.227.97"
+		}],
+		"Slave": [{
+			"IsPublic": true,
+			"Ip": "54.169.231.183"
+		}],
+		"Gossiper": [{
+			"IsPublic": true,
+			"Ip": "54.169.110.87"
+		}],
+		"Key_pem": "/home/ubuntu/DC2/K8sBlore.pem",
+		"Username": ""
+	}, {
+		"Master": [{
+			"IsPublic": true,
+			"Ip": "54.171.130.45"
+		}],
+		"Slave": [{
+			"IsPublic": true,
+			"Ip": "54.229.64.11"
+		}],
+		"Gossiper": [{
+			"IsPublic": true,
+			"Ip": "54.229.65.83"
+		}],
+		"Key_pem": "/home/ubuntu/DC1/K8sBlore.pem",
+		"Username": ""
+	}]
+
+}
