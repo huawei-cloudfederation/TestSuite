@@ -1,0 +1,24 @@
+{
+	"List": [{
+        "DC_id": 4,
+		"Master": [{
+			"IsPublic": true,
+			"Ip": "54.152.80.242"
+		}],
+		"Slave": [{
+			"IsPublic": true,
+			"Ip": "54.173.206.194"
+		}],
+		"Gossiper": [{
+			"IsPublic": true,
+			"Ip": "54.175.74.225"
+		}],
+		"Consul": [{
+			"IsPublic": true,
+			"Ip": "52.91.29.9"
+		}],
+		"Key_pem": "/home/ubuntu/DC4/K8sBlore.pem",
+		"Username": ""
+	}] 
+
+}
