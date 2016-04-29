@@ -7,16 +7,63 @@ import (
 	"golang.org/x/crypto/ssh"
 	"log"
 	"os/exec"
-//	    "io"
+	//	    "io"
 	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
 	"time"
-	//"net/http"
+	//	"net/http"
 	"strconv"
-	 //"path/filepath"
+	//"path/filepath"
 )
+
+type GossiperConfig struct {
+	Name           string //Name of this gossiper
+	City           string
+	Country        string
+	MasterEndPoint string //MesosMaster's IP address
+	ConfigType     string //What type of gossiper is this ? Join a federation or start a federation? Values = JOIN or NEW
+	JoinEndPoint   string //If we are joining an already runnig federatoin the what is the EndPoint?
+	LogFile        string //Name of the logfile
+	HTTPPort       string //Defaults to 8080 if otherwise specify explicitly
+	TCPPort        string //TCP port at which gossiper will bind and listen for anon module to connect to
+	GPort          int    //Port at which gossper should start
+	AdvertiseAddr  string //The advertised address of the gossiper so that other gossipers coudl connect
+	ConsConfig     CoConfig
+}
+
+//global consul config
+type CoConfig struct {
+	IsLeader    bool
+	DCEndpoint  string
+	StorePreFix string
+	DCName      string
+}
+
+type ConsulConfig struct {
+	Name               string
+	Data_dir           string
+	Log_level          string
+	Server             bool
+	Bootstrap          bool
+	Start_join         string
+	Bind_addr          string
+	Ad                 Addresses
+	Retry_join_wan     []string
+	Retry_interval_wan string
+	AdvAdd             Advertise_addrs
+}
+
+type Addresses struct {
+	Http string
+}
+
+type Advertise_addrs struct {
+	Serf_lan string
+	Serf_wan string
+	Rpc      string
+}
 
 type Config struct {
 	List []DC `json:List`
@@ -28,6 +75,8 @@ type DC struct {
 	Slave    []System
 	Gossiper []System
 	Consul   []System
+	Country  string
+	City     string
 	Key_pem  string `json:Key_pem`
 	Username string `json:Username`
 }
@@ -35,6 +84,42 @@ type DC struct {
 type System struct {
 	IsPublic bool
 	Ip       string
+}
+
+func ConsulMarshal(id int, fConsulIp string, publicIp string, privateIp string) {
+	name := strconv.Itoa(id)
+	path := "/home/ubuntu/DC" + name + "/consul.json"
+	var conf *ConsulConfig
+	if name == "1" {
+		conf = &ConsulConfig{Name: name, Data_dir: "/home/ubuntu/fedCloud/consul", Log_level: "INFO", Server: true, Bootstrap: true, Start_join: privateIp, Bind_addr: privateIp, Ad: Addresses{Http: privateIp}, Retry_join_wan:[]string{""}, Retry_interval_wan: "", AdvAdd: Advertise_addrs{Serf_lan: publicIp + ":8301", Serf_wan: publicIp + ":8302", Rpc: publicIp + ":8303"}}
+	} else {
+		conf = &ConsulConfig{Name: name, Data_dir: "/home/ubuntu/fedCloud/consul", Log_level: "INFO", Server: true, Bootstrap: true, Start_join: privateIp, Bind_addr: privateIp, Ad: Addresses{Http: privateIp}, Retry_join_wan:[]string{fConsulIp}, Retry_interval_wan: "5s", AdvAdd: Advertise_addrs{Serf_lan: publicIp + ":8301", Serf_wan: publicIp + ":8302", Rpc: publicIp + ":8303"}}
+	}
+	list, _ := json.MarshalIndent(conf, " ", "  ")
+
+	err := ioutil.WriteFile(path, list, 0644)
+	if err != nil {
+		fmt.Printf("WriteFile json Error: %tv", err)
+	}
+}
+
+func GossiperMarshal(id int, mPublicIp string, publicIp string, fGossiperIp string, consulIp string, city string, country string) {
+	name := strconv.Itoa(id)
+	path := "/home/ubuntu/DC" + name + "/gossiper.json"
+	var conf *GossiperConfig
+	if name == "1" {
+		conf = &GossiperConfig{Name: name, ConfigType: "New", GPort: 4400, MasterEndPoint: mPublicIp, AdvertiseAddr: publicIp, Country: country, City: city, ConsConfig: CoConfig{IsLeader: true, DCEndpoint: consulIp + ":8500", StorePreFix: "Federa"}}
+	} else {
+
+		conf = &GossiperConfig{Name: name, ConfigType: "Old", JoinEndPoint: fGossiperIp, GPort: 4400, MasterEndPoint: mPublicIp, AdvertiseAddr: publicIp, Country: country, City: city, ConsConfig: CoConfig{IsLeader: false, DCEndpoint: consulIp + ":8500", StorePreFix: "Federa"}}
+
+	}
+	list, _ := json.MarshalIndent(conf, " ", "  ")
+
+	err := ioutil.WriteFile(path, list, 0644)
+	if err != nil {
+		fmt.Printf("WriteFile json Error: %tv", err)
+	}
 }
 
 func (conf *Config) Json_unmarshal_conf(file []byte) {
@@ -47,27 +132,28 @@ func (conf *Config) Json_unmarshal_conf(file []byte) {
 	f, _ := os.Create("/home/ubuntu/test/log.txt")
 	log.SetOutput(f)
 	defer f.Close()
+	fConsulIp := conf.List[0].Consul[0].Ip
+	fGossiperIp := conf.List[0].Gossiper[0].Ip
 	for i := 0; i < len(conf.List); i++ {
 		wg.Add(1)
-		path_dir := "/home/ubuntu/fed/" + "DC"+ strconv.Itoa(conf.List[i].DC_id)
-//		path_dir :=  "DC"+ strconv.Itoa(conf.List[i].DC_id)
+		path_dir := "/home/ubuntu/fed/" + "DC" + strconv.Itoa(conf.List[i].DC_id)
 		fmt.Println(path_dir)
-		err := os.MkdirAll(path_dir,0777)
-		if err != nil{
-			fmt.Println("error in creating directory \n",err) 
+		err := os.MkdirAll(path_dir, 0777)
+		if err != nil {
+			fmt.Println("error in creating directory \n", err)
 		}
 		str1 := [][]string{
-			[]string{"ssh", "-i", conf.List[i].Key_pem,"-o","StrictHostKeyChecking=no", conf.List[i].Master[0].Ip, "hostname", "-i"},
+			[]string{"ssh", "-i", conf.List[i].Key_pem, "-o", "StrictHostKeyChecking=no", conf.List[i].Master[0].Ip, "hostname", "-i"},
 		}
 		privateIp = get_ip(str1)
 		fmt.Println("I am inside", privateIp, "\n")
 		fmt.Println("log file is creating\n")
 		log.Printf("=============Data Center Id : %d ================\n", conf.List[i].DC_id)
-		go create_hosts(conf.List[i].Master[0].Ip, wg, "0", privateIp, conf.List[i].Key_pem,conf.List[i].DC_id)
-		go create_hosts(conf.List[i].Slave[0].Ip, wg, "1", privateIp, conf.List[i].Key_pem,conf.List[i].DC_id)
-		go create_hosts(conf.List[i].Gossiper[0].Ip, wg, "2", privateIp, conf.List[i].Key_pem,conf.List[i].DC_id)
-		go create_hosts(conf.List[i].Consul[0].Ip, wg, "3", privateIp, conf.List[i].Key_pem,conf.List[i].DC_id)
-		//		go keep_alive(conf.List[i].Master[0].Ip, conf.List[i].Slave[0].Ip, conf.List[i].Gossiper[0].Ip,wg)
+		go create_hosts(conf.List[i].Master[0].Ip, wg, "0", privateIp, conf.List[i].Key_pem, conf.List[i].DC_id, conf.List[i].Country, conf.List[i].City, fGossiperIp, conf.List[i].Consul[0].Ip)
+		go create_hosts(conf.List[i].Slave[0].Ip, wg, "1", conf.List[i].Master[0].Ip, conf.List[i].Key_pem, conf.List[i].DC_id, conf.List[i].Country, conf.List[i].City, fGossiperIp, conf.List[i].Consul[0].Ip)
+		go create_hosts(conf.List[i].Gossiper[0].Ip, wg, "2", conf.List[i].Master[0].Ip, conf.List[i].Key_pem, conf.List[i].DC_id, conf.List[i].Country, conf.List[i].City, fGossiperIp, conf.List[i].Consul[0].Ip)
+		go create_hosts(conf.List[i].Consul[0].Ip, wg, "3", fConsulIp, conf.List[i].Key_pem, conf.List[i].DC_id, conf.List[i].Country, conf.List[i].City, fGossiperIp, conf.List[i].Consul[0].Ip)
+		//		go keep_alive(conf.List[i].Master[0].Ip, conf.List[i].Slave[0].Ip, conf.List[i].Gossiper[0].Ip,wg, conf.List[i].Country, conf.List[i].City, fGossiperIp, conf.List[i].Consul[0].Ip)
 	}
 	wg.Wait()
 }
@@ -88,7 +174,7 @@ func get_ip(str [][]string) string {
 	return "nil"
 }
 
-func create_hosts(publicIp string, wg *sync.WaitGroup, host string, privateIp string, path_pem string,id int) {
+func create_hosts(publicIp string, wg *sync.WaitGroup, host string, privateIp string, path_pem string, id int, country string, city string, fGossiperIp string, consulIp string) {
 	var time_start, time_end time.Time
 	Ip := "ubuntu@" + publicIp + ":/home/ubuntu"
 	fmt.Println(Ip)
@@ -104,17 +190,16 @@ func create_hosts(publicIp string, wg *sync.WaitGroup, host string, privateIp st
 	time_end = time.Now()
 	time_diff(time_start, time_end)
 
-	if host == "3" {
-		con_arr1 := [][]string{
-			[]string{"scp", "-i", path_pem, "-o", "StrictHostKeyChecking=no", "/home/ubuntu/consul", Ip},
+	if host == "2" {
+		GossiperMarshal(id, privateIp, publicIp, fGossiperIp, consulIp, city, country)
+	} else if host == "3" {
+		str1 := [][]string{
+			[]string{"ssh", "-i", path_pem, "-o", "StrictHostKeyChecking=no", publicIp, "hostname", "-i"},
 		}
-		fmt.Println("Waiting for copying consule...\n ")
-		time_start = time.Now()
-		process_arr(con_arr1)
-		time_end = time.Now()
-		time_diff(time_start, time_end)
+		pIp := get_ip(str1)
+		ConsulMarshal(id, privateIp, publicIp, pIp)
 	}
-	ssh_con(publicIp, host, privateIp, path_pem,id)
+	ssh_con(publicIp, host, privateIp, path_pem, id)
 
 	wg.Done()
 }
@@ -186,15 +271,16 @@ func PublicKeyFile(file string) ssh.AuthMethod {
 	}
 	return ssh.PublicKeys(key)
 }
-func ssh_con(publicIp string, host string, privateIp string, path_pem string,id int) {
+func ssh_con(publicIp string, host string, privateIp string, path_pem string, id int) {
 	var time_start, time_end time.Time
 	var b bytes.Buffer
 	var inbyte bytes.Buffer
 	var path string
-	master := "sudo ./bin/mesos-master.sh --ip=" + privateIp + " --work_dir=$HOME --modules='file://../../FedModules/FedModules.json' --allocator='mesos_fed_allocator_module' \n"
+	master := "sudo ./bin/mesos-master.sh --ip=" + privateIp + " --work_dir=$HOME --advertise_ip=" + publicIp + " --advertise_port=5050 --modules='file://../../FedModules/FedModules.json' --allocator='mesos_fed_allocator_module' \n"
 	slave := "sudo ./bin/mesos-slave.sh --master=" + privateIp + ":5050 \n"
-	gossiper := "./gossiper -config=first.json \n"
-	consul := "sudo ./consul agent -config-file=/home/ubuntu/config_consul.json > /tmp/server.log 2>&1 \n"
+	gossiper := "./gossiper -config=config.json \n"
+	//	consul := "sudo ./consul agent -config-file=/home/ubuntu/fedCloud/consul/config.json > /tmp/server.log 2>&1 \n"
+	consul := "sudo ./consul agent -config-file=/home/ubuntu/fedCloud/consul/config.json \n"
 	config := &ssh.ClientConfig{
 		User: "ubuntu",
 		Auth: []ssh.AuthMethod{
@@ -254,27 +340,47 @@ func ssh_con(publicIp string, host string, privateIp string, path_pem string,id 
 	time_end = time.Now()
 	time_diff(time_start, time_end)
 	session, err := client.NewSession()
-	defer session.Close()
+	//defer session.Close()
 	if host == "0" {
-        path = "/home/ubuntu/fed/"+"DC"+strconv.Itoa(id)+"/master.log"
-	logfile, _ := os.Create(path)
-	session.Stdout = logfile 
-	session.Stderr = logfile 
+		path = "/home/ubuntu/fed/" + "DC" + strconv.Itoa(id) + "/master.log"
+		logfile, _ := os.Create(path)
+		session.Stdout = logfile
+		session.Stderr = logfile
 	} else if host == "1" {
-        path = "/home/ubuntu/fed/"+"DC"+strconv.Itoa(id)+"/slave.log"
-	logfile, _ := os.Create(path)
-	session.Stdout = logfile 
-	session.Stderr = logfile 
-	}else if host == "2" {
-        path = "/home/ubuntu/fed/"+"DC"+strconv.Itoa(id)+"/gossiper.log"
-	logfile, _ := os.Create(path)
-	session.Stdout = logfile 
-	session.Stderr = logfile 
-	}else  if host == "3" {
-        path = "/home/ubuntu/fed/"+"DC"+strconv.Itoa(id)+"/consul.log"
-	logfile, _ := os.Create(path)
-	session.Stdout = logfile 
-	session.Stderr = logfile 
+		path = "/home/ubuntu/fed/" + "DC" + strconv.Itoa(id) + "/slave.log"
+		logfile, _ := os.Create(path)
+		session.Stdout = logfile
+		session.Stderr = logfile
+	} else if host == "2" {
+
+		gIp := "ubuntu@" + publicIp + ":/home/ubuntu/fedCloud/gossiper/config.json"
+		name := strconv.Itoa(id)
+		configPath := "/home/ubuntu/DC" + name + "/gossiper.json"
+
+		con_arr1 := [][]string{
+			[]string{"scp", "-i", path_pem, "-o", "StrictHostKeyChecking=no", configPath, gIp},
+		}
+		process_arr(con_arr1)
+
+		path = "/home/ubuntu/fed/" + "DC" + strconv.Itoa(id) + "/gossiper.log"
+		logfile, _ := os.Create(path)
+		session.Stdout = logfile
+		session.Stderr = logfile
+	} else if host == "3" {
+
+		cIp := "ubuntu@" + publicIp + ":/home/ubuntu/fedCloud/consul/config.json"
+		name := strconv.Itoa(id)
+		configPath := "/home/ubuntu/DC" + name + "/consul.json"
+
+		fmt.Println(time.Now(), configPath)
+		con_arr1 := [][]string{
+			[]string{"scp", "-i", path_pem, "-o", "StrictHostKeyChecking=no", configPath, cIp},
+		}
+		process_arr(con_arr1)
+		path = "/home/ubuntu/fed/" + "DC" + strconv.Itoa(id) + "/consul.log"
+		logfile, _ := os.Create(path)
+		session.Stdout = logfile
+		session.Stderr = logfile
 	}
 
 	session.Stdin = &inbyte
@@ -290,9 +396,9 @@ func ssh_con(publicIp string, host string, privateIp string, path_pem string,id 
 		_, err = inbyte.WriteString(gossiper)
 	} else if host == "3" {
 		_, err = inbyte.WriteString("sudo rm -rf /home/ubuntu/serf /home/ubuntu/raft /home/ubuntu/checkpoint-signature /tmp/server.log /usr/local/bin/consul\n")
-		_, err = inbyte.WriteString("sudo cp /home/ubuntu/consul /usr/local/bin\n")
-		_, err = inbyte.WriteString("sudo cd  /usr/local/bin\n")
-		//_, err = inbyte.WriteString("cp /home/ubuntu/config_consul.json /home/ubuntu/fedCloud/config.json\n")
+		_, err = inbyte.WriteString("sudo cp /home/ubuntu/fedCloud/consul/consul /usr/local/bin\n")
+		//		_, err = inbyte.WriteString("sudo cd  /usr/local/bin\n")
+		_, err = inbyte.WriteString("cp /home/ubuntu/config_consul.json /home/ubuntu/fedCloud/consul/config.json\n")
 		_, err = inbyte.WriteString(consul)
 	}
 	session.Wait()
@@ -333,6 +439,30 @@ func fed_mesos() {
 	time_diff(cmd_start, cmd_end)
 
 	cmd_start = time.Now()
+	create_cdir := exec.Command("mkdir", "consul")
+	create_cdir.Dir = "/home/ubuntu/fedCloud/"
+	create_cerr := create_cdir.Start()
+	if create_cerr != nil {
+		log.Fatal(create_cerr)
+	}
+	log.Printf("Waiting for creating dir cmd to finish...")
+	create_cerr = create_cdir.Wait()
+	cmd_end = time.Now()
+	time_diff(cmd_start, cmd_end)
+
+	cmd_start = time.Now()
+	copy_consul := exec.Command("sudo", "cp", "/usr/local/bin/consul", "consul/.")
+	copy_consul.Dir = "/home/ubuntu/fedCloud/"
+	copy_cerr := copy_consul.Start()
+	if copy_cerr != nil {
+		log.Fatal(copy_cerr)
+	}
+	log.Printf("Waiting for copying consul cmd to finish...")
+	copy_cerr = copy_consul.Wait()
+	cmd_end = time.Now()
+	time_diff(cmd_start, cmd_end)
+
+	cmd_start = time.Now()
 	boot := exec.Command("sudo", "./bootstrap")
 	boot.Dir = "/home/ubuntu/fedCloud/mesos"
 	start_err := boot.Start()
@@ -346,7 +476,7 @@ func fed_mesos() {
 	time_diff(cmd_start, cmd_end)
 
 	cmd_start = time.Now()
-	create_dir := exec.Command("sudo", "mkdir", "build")
+	create_dir := exec.Command("mkdir", "build")
 	create_dir.Dir = "/home/ubuntu/fedCloud/mesos"
 	create_err := create_dir.Start()
 	if create_err != nil {
@@ -458,7 +588,7 @@ func time_diff(cmd_start time.Time, cmd_end time.Time) {
 
 func main() {
 	var ver int
-	file, err := ioutil.ReadFile("./test.json")
+	file, err := ioutil.ReadFile("./config2.json")
 	if err != nil {
 		log.Fatal(err)
 	} else {
